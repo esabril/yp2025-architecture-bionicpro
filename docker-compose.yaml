@@ -76,28 +76,104 @@ services:
       POSTGRES_DB: airflow_db
       POSTGRES_USER: airflow_user
       POSTGRES_PASSWORD: airflow_password
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow_user", "-d", "airflow_db"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
 
-  airflow:
+  airflow-init:
     build:
       context: ./airflow
       dockerfile: Dockerfile
     depends_on:
-      - airflow_db
-      - crm_db
-      - telemetry_db
-      - clickhouse
+      airflow_db:
+        condition: service_healthy
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user:airflow_password@airflow_db:5432/airflow_db
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+      AIRFLOW__WEBSERVER__SECRET_KEY: bionicpro_airflow_webserver_secret
       AIRFLOW_CONN_CRM_DB: postgresql://crm_user:crm_password@crm_db:5432/crm_db
       AIRFLOW_CONN_TELEMETRY_DB: postgresql://telemetry_user:telemetry_password@telemetry_db:5432/telemetry_db
-    command: standalone
+    command: >
+      bash -c "
+        airflow db migrate &&
+        (airflow users create --username admin --firstname admin --lastname admin --role Admin --email admin@bionicpro.local --password admin || true) &&
+        airflow users reset-password --username admin --password admin
+      "
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+
+  airflow-webserver:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user:airflow_password@airflow_db:5432/airflow_db
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+      AIRFLOW__WEBSERVER__SECRET_KEY: bionicpro_airflow_webserver_secret
+      AIRFLOW_CONN_CRM_DB: postgresql://crm_user:crm_password@crm_db:5432/crm_db
+      AIRFLOW_CONN_TELEMETRY_DB: postgresql://telemetry_user:telemetry_password@telemetry_db:5432/telemetry_db
+    command: webserver
     volumes:
       - ./airflow/dags:/opt/airflow/dags
     ports:
       - "8081:8080"
+
+  airflow-scheduler:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      crm_db:
+        condition: service_started
+      telemetry_db:
+        condition: service_started
+      clickhouse:
+        condition: service_started
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user:airflow_password@airflow_db:5432/airflow_db
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+      AIRFLOW__WEBSERVER__SECRET_KEY: bionicpro_airflow_webserver_secret
+      AIRFLOW_CONN_CRM_DB: postgresql://crm_user:crm_password@crm_db:5432/crm_db
+      AIRFLOW_CONN_TELEMETRY_DB: postgresql://telemetry_user:telemetry_password@telemetry_db:5432/telemetry_db
+    command: scheduler
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+
+  airflow-triggerer:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user:airflow_password@airflow_db:5432/airflow_db
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+      AIRFLOW__WEBSERVER__SECRET_KEY: bionicpro_airflow_webserver_secret
+      AIRFLOW_CONN_CRM_DB: postgresql://crm_user:crm_password@crm_db:5432/crm_db
+      AIRFLOW_CONN_TELEMETRY_DB: postgresql://telemetry_user:telemetry_password@telemetry_db:5432/telemetry_db
+    command: triggerer
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
 
   reports-api:
     build:

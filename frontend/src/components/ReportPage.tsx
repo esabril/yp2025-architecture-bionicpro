@@ -24,6 +24,8 @@ type ProsthesisReport = {
 type ReportsResponse = {
   user_id: string;
   generated_at: string;
+  period_start?: string;
+  period_end?: string;
   reports: ProsthesisReport[];
 };
 
@@ -32,10 +34,16 @@ const ReportPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<ReportsResponse | null>(null);
+  const [periodStart, setPeriodStart] = useState('');
+  const [periodEnd, setPeriodEnd] = useState('');
 
   const downloadReport = async () => {
     if (!keycloak?.token) {
-      setError('Not authenticated');
+      setError('Необходимо войти в систему.');
+      return;
+    }
+    if ((periodStart && !periodEnd) || (!periodStart && periodEnd)) {
+      setError('Выберите дату начала и дату окончания периода.');
       return;
     }
 
@@ -43,7 +51,13 @@ const ReportPage: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/reports`, {
+      const params = new URLSearchParams();
+      if (periodStart && periodEnd) {
+        params.set('period_start', periodStart);
+        params.set('period_end', periodEnd);
+      }
+      const query = params.toString();
+      const response = await fetch(`${process.env.REACT_APP_API_URL}/reports${query ? `?${query}` : ''}`, {
         headers: {
           'Authorization': `Bearer ${keycloak.token}`
         }
@@ -51,12 +65,12 @@ const ReportPage: React.FC = () => {
 
       const payload = await response.json();
       if (!response.ok) {
-        throw new Error(payload.error || 'Failed to load report');
+        throw new Error(payload.error || 'Не удалось загрузить отчёт.');
       }
 
       setReport(payload);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : 'Произошла ошибка.');
     } finally {
       setLoading(false);
     }
@@ -83,7 +97,28 @@ const ReportPage: React.FC = () => {
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
       <div className="w-full max-w-5xl p-8 bg-white rounded-lg shadow-md">
         <h1 className="text-2xl font-bold mb-6">Usage Reports</h1>
-        
+
+        <div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-end">
+          <label className="flex flex-col text-sm font-medium text-gray-700">
+            Period start
+            <input
+              type="date"
+              value={periodStart}
+              onChange={(event) => setPeriodStart(event.target.value)}
+              className="mt-1 px-3 py-2 border border-gray-300 rounded"
+            />
+          </label>
+          <label className="flex flex-col text-sm font-medium text-gray-700">
+            Period end
+            <input
+              type="date"
+              value={periodEnd}
+              onChange={(event) => setPeriodEnd(event.target.value)}
+              className="mt-1 px-3 py-2 border border-gray-300 rounded"
+            />
+          </label>
+        </div>
+
         <button
           onClick={downloadReport}
           disabled={loading}
@@ -104,11 +139,14 @@ const ReportPage: React.FC = () => {
           <div className="mt-6">
             <div className="mb-4 text-sm text-gray-600">
               User: {report.user_id}. Generated at: {new Date(report.generated_at).toLocaleString()}.
+              {report.period_start && report.period_end && (
+                <> Period: {report.period_start} - {report.period_end}.</>
+              )}
             </div>
 
             {report.reports.length === 0 ? (
               <div className="p-4 bg-yellow-100 text-yellow-800 rounded">
-                No report data is available yet.
+                Данные отчёта пока недоступны.
               </div>
             ) : (
               <div className="overflow-x-auto">
